@@ -22,3 +22,25 @@ python submitit_pretrain.py \
 - Training time is ~42h in 64 V100 GPUs (800 epochs).
 
 To train ViT-Base or ViT-Huge, set `--model mae_vit_base_patch16` or `--model mae_vit_huge_patch14`.
+
+
+python -m torch.distributed.launch --nproc_per_node=2 main_pretrain.py \
+    --batch_size 1 \
+    --crop_size 14 \
+    --model mae_vit_base_patch16 \
+    --norm_pix_loss \
+    --mask_ratio 0.75 \
+    --epochs 10000 \
+    --warmup_epochs 250 \
+    --blr 1.5e-4 --weight_decay 0.05 \
+    
+    
+
+python -m torch.distributed.launch --nproc_per_node=2 main_pretrain.py \
+    --batch_size 1 \
+    --crop_size 13 \
+    --model mae_vit_base_patch16 \
+    --mask_ratio 0.75 \
+    --epochs 10000 \
+    --warmup_epochs 250 \
+    --blr 1.5e-4 --weight_decay 0.05 \
