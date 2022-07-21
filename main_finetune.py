@@ -27,7 +27,8 @@ assert timm.__version__ == "0.3.2" # version check
 from timm.models.layers import trunc_normal_
 from timm.data.mixup import Mixup
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
-
+from functools import partial
+import torch.nn as nn
 import util.lr_decay as lrd
 import util.misc as misc
 from util.datasets import build_dataset
@@ -35,6 +36,7 @@ from util.pos_embed import interpolate_pos_embed
 from util.misc import NativeScalerWithGradNormCount as NativeScaler
 
 import models_vit
+import models_unetr
 from datafunction import MedData_train
 from engine_finetune import train_one_epoch, evaluate
 
@@ -48,7 +50,7 @@ def get_args_parser():
                         help='Batch size per GPU (effective batch size is batch_size * accum_iter * # gpus')
 
     parser.add_argument('--epochs', default=50, type=int)
-    parser.add_argument('--accum_iter', default=1, type=int,
+    parser.add_argument('--accum_iter', default=5, type=int,
                         help='Accumulate gradient iterations (for increasing the effective batch size under memory constraints)')
 
     # Model parameters
@@ -98,27 +100,27 @@ def get_args_parser():
     parser.add_argument('--resplit', action='store_true', default=False,
                         help='Do not random erase first (clean) augmentation split')
 
-    # * Mixup params
-    parser.add_argument('--mixup', type=float, default=0,
-                        help='mixup alpha, mixup enabled if > 0.')
-    parser.add_argument('--cutmix', type=float, default=0,
-                        help='cutmix alpha, cutmix enabled if > 0.')
-    parser.add_argument('--cutmix_minmax', type=float, nargs='+', default=None,
-                        help='cutmix min/max ratio, overrides alpha and enables cutmix if set (default: None)')
-    parser.add_argument('--mixup_prob', type=float, default=1.0,
-                        help='Probability of performing mixup or cutmix when either/both is enabled')
-    parser.add_argument('--mixup_switch_prob', type=float, default=0.5,
-                        help='Probability of switching to cutmix when both mixup and cutmix enabled')
-    parser.add_argument('--mixup_mode', type=str, default='batch',
-                        help='How to apply mixup/cutmix params. Per "batch", "pair", or "elem"')
+    # # * Mixup params
+    # parser.add_argument('--mixup', type=float, default=0,
+    #                     help='mixup alpha, mixup enabled if > 0.')
+    # parser.add_argument('--cutmix', type=float, default=0,
+    #                     help='cutmix alpha, cutmix enabled if > 0.')
+    # parser.add_argument('--cutmix_minmax', type=float, nargs='+', default=None,
+    #                     help='cutmix min/max ratio, overrides alpha and enables cutmix if set (default: None)')
+    # parser.add_argument('--mixup_prob', type=float, default=1.0,
+    #                     help='Probability of performing mixup or cutmix when either/both is enabled')
+    # parser.add_argument('--mixup_switch_prob', type=float, default=0.5,
+    #                     help='Probability of switching to cutmix when both mixup and cutmix enabled')
+    # parser.add_argument('--mixup_mode', type=str, default='batch',
+    #                     help='How to apply mixup/cutmix params. Per "batch", "pair", or "elem"')
 
     # * Finetuning params
     parser.add_argument('--finetune', default='',
                         help='finetune from checkpoint')
-    parser.add_argument('--global_pool', action='store_true')
-    parser.set_defaults(global_pool=True)
-    parser.add_argument('--cls_token', action='store_false', dest='global_pool',
-                        help='Use class token instead of global pool for classification')
+    # parser.add_argument('--global_pool', action='store_true')
+    # parser.set_defaults(global_pool=True)
+    # parser.add_argument('--cls_token', action='store_false', dest='global_pool',
+    #                     help='Use class token instead of global pool for classification')
 
     # Dataset parameters
     # parser.add_argument('--data_path', default='/datasets01/imagenet_full_size/061417/', type=str,
@@ -127,9 +129,9 @@ def get_args_parser():
     #                     help='number of the classification types')
 
 
-    parser.add_argument('--train_dir', default='/datasets01/imagenet_full_size/061417/', type=str,
+    parser.add_argument('--train_dir', default='finetune_data/train', type=str,
                         help='train dataset path')
-    parser.add_argument('--eval_dir', default='/datasets01/imagenet_full_size/061417/', type=str,
+    parser.add_argument('--eval_dir', default='finetune_data/valid', type=str,
                         help='eval dataset path')
 
 
@@ -230,16 +232,21 @@ def main(args):
         drop_last=False
     )
 
-    mixup_fn = None
-    mixup_active = args.mixup > 0 or args.cutmix > 0. or args.cutmix_minmax is not None
-    if mixup_active:
-        print("Mixup is activated!")
-        mixup_fn = Mixup(
-            mixup_alpha=args.mixup, cutmix_alpha=args.cutmix, cutmix_minmax=args.cutmix_minmax,
-            prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
-            label_smoothing=args.smoothing, num_classes=args.nb_classes)
+    # mixup_fn = None
+    # mixup_active = args.mixup > 0 or args.cutmix > 0. or args.cutmix_minmax is not None
+    # if mixup_active:
+    #     print("Mixup is activated!")
+    #     mixup_fn = Mixup(
+    #         mixup_alpha=args.mixup, cutmix_alpha=args.cutmix, cutmix_minmax=args.cutmix_minmax,
+    #         prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
+    #         label_smoothing=args.smoothing, num_classes=args.nb_classes)
     
-    model = models_unetr.__dict__[args.model]
+    model = models_unetr.__dict__[args.model](dropout_rate=args.drop_path)
+
+    # model = models_unetr.UNETR(in_chans=1, embed_dim=768, depth=12, num_heads=12,
+    #     mlp_ratio=4., norm_layer=partial(nn.LayerNorm, eps=1e-6),
+    #     dropout_rate=0.1, feature_size=16, norm_name="instance",
+    #     conv_block=True, res_block=True, out_channels=1)
 
     if args.finetune and not args.eval:
         checkpoint = torch.load(args.finetune, map_location='cpu')
@@ -287,15 +294,16 @@ def main(args):
     print("effective batch size: %d" % eff_batch_size)
 
     if args.distributed:
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu],find_unused_parameters=True)
         model_without_ddp = model.module
 
     # build optimizer with layer-wise lr decay (lrd)
-    param_groups = lrd.param_groups_lrd(model_without_ddp, args.weight_decay,
-        no_weight_decay_list=model_without_ddp.no_weight_decay(),
-        layer_decay=args.layer_decay
-    )
-    optimizer = torch.optim.AdamW(param_groups, lr=args.lr)
+    # param_groups = lrd.param_groups_lrd(model_without_ddp, args.weight_decay,
+    #     no_weight_decay_list=model_without_ddp.no_weight_decay(),
+    #     layer_decay=args.layer_decay
+    # )
+    # optimizer = torch.optim.AdamW(param_groups, lr=args.lr)
+    optimizer = torch.optim.AdamW(model.parameters(), lr = args.lr,weight_decay = args.weight_decay)
     loss_scaler = NativeScaler()
 
     # if mixup_fn is not None:
@@ -323,12 +331,20 @@ def main(args):
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             data_loader_train.sampler.set_epoch(epoch)
+        # train_stats = train_one_epoch(
+        #     model, criterion, data_loader_train,
+        #     optimizer, device, epoch, loss_scaler,
+        #     args.clip_grad, mixup_fn,
+        #     log_writer=log_writer,
+        #     args=args
+        # )
+
         train_stats = train_one_epoch(
             model, criterion, data_loader_train,
             optimizer, device, epoch, loss_scaler,
-            args.clip_grad, mixup_fn,
-            log_writer=log_writer,
-            args=args
+            args.clip_grad,
+            log_writer = log_writer,
+            args = args
         )
         if args.output_dir:
             misc.save_model(

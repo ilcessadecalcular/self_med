@@ -76,7 +76,7 @@ def get_args_parser():
                         help='epochs to warmup LR')
 
     # Dataset parameters
-    parser.add_argument('--data_path', default='data', type=str,
+    parser.add_argument('--data_path', default='pretrain_data', type=str,
                         help='dataset path')
 
     parser.add_argument('--output_dir', default='./output_dir_no_pix',

@@ -14,7 +14,7 @@ class ViT(nn.Module):
     def __init__(self, img_size=512, patch_size=16, in_chans=1,
                  embed_dim=1024, depth=24, num_heads=16,
                  mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False,
-                 dropout_rate: float = 0.0):
+                 dropout_rate: float = 0.1):
         super().__init__()
         if not (0 <= dropout_rate <= 1):
             raise ValueError("dropout_rate should be between 0 and 1.")

@@ -175,3 +175,15 @@ This PT/GPU code produces *better* results for ViT-L/H (see the table below). Th
 <td align="center">77.2</td>
 </tr>
 </tbody></table>
+
+
+python -m torch.distributed.launch --nproc_per_node=2 main_finetune.py \
+    --batch_size 1 \
+    --crop_size 10 \
+    --model unetr_base_patch16 \
+    --epochs 10000 \
+    --warmup_epochs 250 \
+    --blr 1.5e-4 \
+    --layer_decay 0.65 \
+    --dist_eval \
+    --weight_decay 0.05 \

@@ -47,11 +47,17 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         if data_iter_step % accum_iter == 0:
             lr_sched.adjust_learning_rate(optimizer, data_iter_step / len(data_loader) + epoch, args)
 
+        samples = samples[0, :, :, :, :]
+        samples = torch.permute(samples, (1, 0, 2, 3))
+
+        targets = targets[0, :, :, :, :]
+        targets = torch.permute(targets, (1, 0, 2, 3))
+
         samples = samples.to(device, non_blocking=True)
         targets = targets.to(device, non_blocking=True)
-
-        if mixup_fn is not None:
-            samples, targets = mixup_fn(samples, targets)
+        # print(samples.size())
+        # if mixup_fn is not None:
+        #     samples, targets = mixup_fn(samples, targets)
 
         with torch.cuda.amp.autocast():
             outputs = model(samples)
@@ -63,7 +69,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             print("Loss is {}, stopping training".format(loss_value))
             sys.exit(1)
 
-        loss /= accum_iter
+        loss = loss / accum_iter
         loss_scaler(loss, optimizer, clip_grad=max_norm,
                     parameters=model.parameters(), create_graph=False,
                     update_grad=(data_iter_step + 1) % accum_iter == 0)
@@ -109,6 +115,13 @@ def evaluate(data_loader, model, device):
     for batch in metric_logger.log_every(data_loader, 10, header):
         images = batch[0]
         target = batch[-1]
+
+        samples = samples[0, :, :, :, :]
+        samples = torch.permute(samples, (1, 0, 2, 3))
+
+        targets = targets[0, :, :, :, :]
+        targets = torch.permute(targets, (1, 0, 2, 3))
+
         images = images.to(device, non_blocking=True)
         target = target.to(device, non_blocking=True)
 
