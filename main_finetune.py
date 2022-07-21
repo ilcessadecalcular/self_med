@@ -35,14 +35,18 @@ from util.pos_embed import interpolate_pos_embed
 from util.misc import NativeScalerWithGradNormCount as NativeScaler
 
 import models_vit
-
+from datafunction import MedData_train
 from engine_finetune import train_one_epoch, evaluate
 
 
 def get_args_parser():
     parser = argparse.ArgumentParser('MAE fine-tuning for image classification', add_help=False)
-    parser.add_argument('--batch_size', default=64, type=int,
+    parser.add_argument('--batch_size', default=1, type=int,
                         help='Batch size per GPU (effective batch size is batch_size * accum_iter * # gpus')
+
+    parser.add_argument('--crop_size', default=32, type=int,
+                        help='Batch size per GPU (effective batch size is batch_size * accum_iter * # gpus')
+
     parser.add_argument('--epochs', default=50, type=int)
     parser.add_argument('--accum_iter', default=1, type=int,
                         help='Accumulate gradient iterations (for increasing the effective batch size under memory constraints)')
@@ -51,7 +55,7 @@ def get_args_parser():
     parser.add_argument('--model', default='vit_large_patch16', type=str, metavar='MODEL',
                         help='Name of model to train')
 
-    parser.add_argument('--input_size', default=224, type=int,
+    parser.add_argument('--input_size', default=512, type=int,
                         help='images input size')
 
     parser.add_argument('--drop_path', type=float, default=0.1, metavar='PCT',
@@ -117,14 +121,21 @@ def get_args_parser():
                         help='Use class token instead of global pool for classification')
 
     # Dataset parameters
-    parser.add_argument('--data_path', default='/datasets01/imagenet_full_size/061417/', type=str,
-                        help='dataset path')
-    parser.add_argument('--nb_classes', default=1000, type=int,
-                        help='number of the classification types')
+    # parser.add_argument('--data_path', default='/datasets01/imagenet_full_size/061417/', type=str,
+    #                     help='dataset path')
+    # parser.add_argument('--nb_classes', default=1000, type=int,
+    #                     help='number of the classification types')
 
-    parser.add_argument('--output_dir', default='./output_dir',
+
+    parser.add_argument('--train_dir', default='/datasets01/imagenet_full_size/061417/', type=str,
+                        help='train dataset path')
+    parser.add_argument('--eval_dir', default='/datasets01/imagenet_full_size/061417/', type=str,
+                        help='eval dataset path')
+
+
+    parser.add_argument('--output_dir', default='./scratch_output_dir',
                         help='path where to save, empty for no saving')
-    parser.add_argument('--log_dir', default='./output_dir',
+    parser.add_argument('--log_dir', default='./scratch_output_dir',
                         help='path where to tensorboard log')
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
@@ -169,9 +180,13 @@ def main(args):
     np.random.seed(seed)
 
     cudnn.benchmark = True
+    train_source_dir = os.path.join(args.train_dir,'source')
+    train_label_dir = os.path.join(args.train_dir, 'label')
+    eval_source_dir = os.path.join(args.eval_dir,'source')
+    eval_label_dir = os.path.join(args.eval_dir, 'label')
 
-    dataset_train = build_dataset(is_train=True, args=args)
-    dataset_val = build_dataset(is_train=False, args=args)
+    dataset_train = MedData_train(source_dir=train_source_dir,label_dir=train_label_dir,crop_size=args.crop_size)
+    dataset_val = MedData_train(source_dir=eval_source_dir,label_dir=eval_label_dir,crop_size=args.crop_size)
 
     if True:  # args.distributed:
         num_tasks = misc.get_world_size()
@@ -224,11 +239,7 @@ def main(args):
             prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
             label_smoothing=args.smoothing, num_classes=args.nb_classes)
     
-    model = models_vit.__dict__[args.model](
-        num_classes=args.nb_classes,
-        drop_path_rate=args.drop_path,
-        global_pool=args.global_pool,
-    )
+    model = models_unetr.__dict__[args.model]
 
     if args.finetune and not args.eval:
         checkpoint = torch.load(args.finetune, map_location='cpu')
@@ -287,13 +298,15 @@ def main(args):
     optimizer = torch.optim.AdamW(param_groups, lr=args.lr)
     loss_scaler = NativeScaler()
 
-    if mixup_fn is not None:
-        # smoothing is handled with mixup label transform
-        criterion = SoftTargetCrossEntropy()
-    elif args.smoothing > 0.:
-        criterion = LabelSmoothingCrossEntropy(smoothing=args.smoothing)
-    else:
-        criterion = torch.nn.CrossEntropyLoss()
+    # if mixup_fn is not None:
+    #     # smoothing is handled with mixup label transform
+    #     criterion = SoftTargetCrossEntropy()
+    # elif args.smoothing > 0.:
+    #     criterion = LabelSmoothingCrossEntropy(smoothing=args.smoothing)
+    # else:
+    #     criterion = torch.nn.CrossEntropyLoss()
+
+    criterion = torch.nn.BCEWithLogitsLoss()
 
     print("criterion = %s" % str(criterion))
 
@@ -301,12 +314,12 @@ def main(args):
 
     if args.eval:
         test_stats = evaluate(data_loader_val, model, device)
-        print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
+        print(f"Dice of the network on the {len(dataset_val)} test images: {test_stats['dice']:.1f}%")
         exit(0)
 
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
-    max_accuracy = 0.0
+    max_dice = 0.0
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             data_loader_train.sampler.set_epoch(epoch)
@@ -322,15 +335,27 @@ def main(args):
                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
                 loss_scaler=loss_scaler, epoch=epoch)
 
+        # test_stats = evaluate(data_loader_val, model, device)
+        # print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
+        # max_accuracy = max(max_accuracy, test_stats["acc1"])
+        # print(f'Max accuracy: {max_accuracy:.2f}%')
+
         test_stats = evaluate(data_loader_val, model, device)
-        print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
-        max_accuracy = max(max_accuracy, test_stats["acc1"])
-        print(f'Max accuracy: {max_accuracy:.2f}%')
+        print(f"Dice of the network on the {len(dataset_val)} test images: {test_stats['dice']:.1f}%")
+        max_dice = max(max_dice, test_stats["dice"])
+        print(f'Max dice: {max_dice:.2f}%')
+
+
+
 
         if log_writer is not None:
-            log_writer.add_scalar('perf/test_acc1', test_stats['acc1'], epoch)
-            log_writer.add_scalar('perf/test_acc5', test_stats['acc5'], epoch)
+            # log_writer.add_scalar('perf/test_acc1', test_stats['acc1'], epoch)
+            # log_writer.add_scalar('perf/test_acc5', test_stats['acc5'], epoch)
+            # log_writer.add_scalar('perf/test_loss', test_stats['loss'], epoch)
+
+            log_writer.add_scalar('perf/test_dice', test_stats['dice'], epoch)
             log_writer.add_scalar('perf/test_loss', test_stats['loss'], epoch)
+
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                         **{f'test_{k}': v for k, v in test_stats.items()},
